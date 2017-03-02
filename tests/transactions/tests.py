@@ -1,9 +1,11 @@
 import os
+from django.views.generic.base import View
 import signal
 import sys
 import threading
 import time
 from unittest import skipIf, skipUnless
+from django.test.client import RequestFactory
 
 from django.db import (
     DatabaseError, Error, IntegrityError, OperationalError, connection,
@@ -14,6 +16,24 @@ from django.test import (
 )
 
 from .models import Reporter
+
+
+class SaveView1(View):
+    def post(a, b):
+        Reporter.objects.create(first_name="Tintin")
+
+    def post_fail():
+        Reporter.objects.create(first_name="Tintin")
+        raise Exception()
+
+
+class SaveView2(View):
+    def post(a, b):
+        request_factory = RequestFactory()
+        view = SaveView1.as_view()
+        request = request_factory.post(path='/')
+        view(request)
+        raise Exception()
 
 
 @skipUnless(connection.features.uses_savepoints, "'atomic' requires transactions and savepoints.")
@@ -264,6 +284,33 @@ class AtomicMergeTests(TransactionTestCase):
     """Test merging transactions with savepoint=False."""
 
     available_apps = ['transactions']
+
+    def test_xxx_1(self):
+        request_factory = RequestFactory()
+
+        @transaction.atomic
+        def dont_save():
+            view = SaveView1.as_view()
+            request = request_factory.post(path='/')
+            view(request)
+
+        dont_save()
+        self.assertQuerysetEqual(Reporter.objects.all(), [])
+
+    def test_xxx_2(self):
+        request_factory = RequestFactory()
+
+        @transaction.atomic
+        def dont_save():
+            view = SaveView2.as_view()
+            request = request_factory.post(path='/')
+            try:
+                view(request)
+            except:
+                pass
+
+        dont_save()
+        self.assertQuerysetEqual(Reporter.objects.all(), [])
 
     def test_merged_outer_rollback(self):
         with transaction.atomic():
